@@ -1,13 +1,18 @@
 <?php
 
 /*
-  Plugin Name: Popular Posts by Xyo
-  Plugin URI: https://xyo.dev/
-  Description: Flexible plugin to show most popular posts based on hits and IP
-  Version: 2.0.0
+  Plugin Name: Xyo Popular Posts
+  Plugin URI: https://xyo.dev/popular-posts
+  Description: Show your most popular posts, ranked from daily deduplicated view counts.
+  Version: 2.1.0
   Author: Patrick Petit (Xyo)
   Author URI: https://xyo.dev/
-  License: GPL2
+  License: GPLv2 or later
+  License URI: https://www.gnu.org/licenses/gpl-2.0.html
+  Text Domain: xyo-popular-posts
+  Domain Path: /languages
+  Requires at least: 6.0
+  Requires PHP: 7.4
 
   Copyright 2011 Patrick Petit (Webeine) (email: hello@webeine.com)
   Inspired by Matt Geri plugin
@@ -25,6 +30,10 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
 
 use Xyo\MostRead\Api;
 use Xyo\MostRead\Core;
@@ -73,4 +82,16 @@ if (is_admin()) {
 add_action('widgets_init', [Core::class, 'widget']);
 add_action('rest_api_init', function () {
     new Api();
+});
+
+// Suggested privacy-policy text (Settings > Privacy), matching the readme.
+add_action('admin_init', function () {
+    if (!function_exists('wp_add_privacy_policy_content')) {
+        return;
+    }
+    $content = __(
+        'Popular Posts by Xyo records a per-post, per-day view counter. To count distinct visitors it stores a pseudonymous token — a salted HMAC of the IP address and user agent, regenerated every day — never the raw IP address. The daily salt is overwritten at midnight, so past tokens cannot be linked back to an IP. Raw hit rows are pruned a few days after aggregation; the retained daily totals contain only counts. No data is sent to any third party.',
+        'xyo-popular-posts'
+    );
+    wp_add_privacy_policy_content('Popular Posts by Xyo', wp_kses_post(wpautop($content)));
 });

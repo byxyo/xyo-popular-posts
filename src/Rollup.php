@@ -6,8 +6,9 @@ namespace Xyo\MostRead;
  * The maintenance engine behind the aggregate model. Three jobs:
  *
  *   run()      — hourly: fold the raw hits of the last couple of days into the
- *                daily aggregate, deduplicating by IP (COUNT(DISTINCT ip)) so a
- *                day counts one visit per IP per post.
+ *                daily aggregate, deduplicating by visitor (COUNT(DISTINCT ip) —
+ *                the column now holds a pseudonymous token, see Tracking\Recorder)
+ *                so a day counts one visit per visitor per post.
  *   backfill() — one-off, chunked: replay ~15 months of legacy raw hits into the
  *                aggregate before the raw rows get pruned away.
  *   prune()    — daily: drop raw rows older than the roll-up buffer and daily

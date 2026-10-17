@@ -41,16 +41,19 @@ class Recorder
     }
 
     /**
-     * Resolve the real visitor IP as a stable 32-bit key for same-day dedup.
+     * Pseudonymous same-day dedup key — never the raw IP.
      *
-     * The site sits behind Cloudflare, so REMOTE_ADDR is the edge IP — we must
-     * read CF-Connecting-IP (then X-Forwarded-For) first. ip2long() only handles
-     * IPv4; for IPv6 we fall back to a crc32 fingerprint so distinct visitors
-     * still count as distinct in COUNT(DISTINCT ip) without widening the column.
+     * We resolve the real visitor IP (the site sits behind Cloudflare, so read
+     * CF-Connecting-IP then X-Forwarded-For before REMOTE_ADDR), then return the
+     * top 32 bits of HMAC-SHA256(ip|user-agent) keyed by a secret salt that
+     * rotates every day. Keeping 32 bits matches the old ip2long key width, so
+     * COUNT(DISTINCT ip) dedup precision is unchanged — but the value is not
+     * reversible: the salt is secret and overwritten at midnight, so yesterday's
+     * keys can no longer be recomputed from an IP. Works the same for IPv4/IPv6.
      *
      * @return int
      */
-    private function _clientIpKey()
+    private function _visitorKey()
     {
         $ip = '';
         foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'] as $header) {
@@ -68,9 +71,37 @@ class Recorder
             return 0;
         }
 
-        $long = ip2long($ip);
+        $ua = isset($_SERVER['HTTP_USER_AGENT'])
+            ? wp_unslash($_SERVER['HTTP_USER_AGENT'])
+            : '';
 
-        return $long !== false ? $long : (int) sprintf('%u', crc32($ip));
+        $hash = hash_hmac('sha256', $ip . '|' . $ua, $this->_daySalt());
+
+        return (int) hexdec(substr($hash, 0, 8));
+    }
+
+    /**
+     * Secret HMAC salt that changes at midnight (site timezone). Stored in a
+     * single, non-autoloaded option that is overwritten on rotation, so the
+     * previous day's salt is irrecoverable and old visitor keys cannot be
+     * recomputed.
+     *
+     * @return string
+     */
+    private function _daySalt()
+    {
+        $today = wp_date('Y-m-d');
+        $data  = get_option('wmrp_day_salt');
+
+        if (!is_array($data) || ($data['day'] ?? '') !== $today) {
+            $data = array(
+                'day'  => $today,
+                'salt' => bin2hex(random_bytes(32)),
+            );
+            update_option('wmrp_day_salt', $data, false);
+        }
+
+        return $data['salt'];
     }
 
     /**
@@ -80,13 +111,16 @@ class Recorder
     {
         global $wpdb;
 
-        $ip = $this->_clientIpKey();
+        // The 'ip' column now holds a daily-rotating pseudonymous token (see
+        // _visitorKey()), not an IP address. Kept as the column name to avoid an
+        // ALTER on the legacy table; COUNT(DISTINCT ip) dedup is unchanged.
+        $visitor = $this->_visitorKey();
 
         return $wpdb->insert(
             $wpdb->prefix . 'xmr_hits',
             array(
                 'post_id' => $this->postID,
-                'ip' => $ip,
+                'ip' => $visitor,
                 'visitdate' => $this->_getNow('date'),
                 'visittime' => $this->_getNow('time'),
                 'visitstamp' => $this->_getNow()
